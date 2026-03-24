@@ -1,0 +1,84 @@
+# ============================================================
+# Kong Gateway - Custom Image with OIDC Plugin
+# Base: kong:3.6 (Debian/Ubuntu-based)
+#
+# Full dependency chain (all copied from GitHub, no luarocks registry):
+#   lua-resty-http       v0.17.1
+#   lua-resty-session    v3.10    (v3.x required by kong-oidc, NOT v4)
+#   lua-resty-hmac       master   (required by lua-resty-jwt)
+#   lua-resty-jwt        master   (requires lua-resty-hmac)
+#   lua-resty-openidc    v1.7.6   (requires all above)
+#   kong-oidc            master   (the plugin itself)
+# ============================================================
+
+FROM kong:3.6
+
+LABEL description="Kong 3.6 with OIDC plugin"
+
+USER root
+
+ENV LUA_LIB_DIR=/usr/local/share/lua/5.1
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends git && \
+    \
+    # ── 1. lua-resty-http ─────────────────────────────────────
+    git clone --depth 1 --branch v0.17.1 \
+        https://github.com/ledgetech/lua-resty-http.git \
+        /tmp/lua-resty-http && \
+    cp -r /tmp/lua-resty-http/lib/resty/. ${LUA_LIB_DIR}/resty/ && \
+    \
+    # ── 2. lua-resty-session v3.10 (NOT v4 — kong-oidc needs v3)
+    git clone --depth 1 --branch v3.10 \
+        https://github.com/bungle/lua-resty-session.git \
+        /tmp/lua-resty-session && \
+    cp -r /tmp/lua-resty-session/lib/resty/. ${LUA_LIB_DIR}/resty/ && \
+    \
+    # ── 3. lua-resty-hmac (required by lua-resty-jwt) ─────────
+    git clone --depth 1 \
+        https://github.com/jkeys089/lua-resty-hmac.git \
+        /tmp/lua-resty-hmac && \
+    cp /tmp/lua-resty-hmac/lib/resty/hmac.lua ${LUA_LIB_DIR}/resty/ && \
+    \
+    # ── 4. lua-resty-jwt (cdbattags fork — supports OpenSSL 3.x)
+    git clone --depth 1 \
+        https://github.com/cdbattags/lua-resty-jwt.git \
+        /tmp/lua-resty-jwt && \
+    cp -r /tmp/lua-resty-jwt/lib/resty/. ${LUA_LIB_DIR}/resty/ && \
+    \
+    # ── 5. lua-resty-openidc v1.7.6 ───────────────────────────
+    git clone --depth 1 --branch v1.7.6 \
+        https://github.com/zmartzone/lua-resty-openidc.git \
+        /tmp/lua-resty-openidc && \
+    cp /tmp/lua-resty-openidc/lib/resty/openidc.lua ${LUA_LIB_DIR}/resty/ && \
+    \
+    # ── 6. kong-oidc plugin ───────────────────────────────────
+    git clone --depth 1 \
+        https://github.com/revomatico/kong-oidc.git \
+        /tmp/kong-oidc && \
+    cp -r /tmp/kong-oidc/kong/plugins/oidc \
+        /usr/local/share/lua/5.1/kong/plugins/ && \
+    \
+    # ── Cleanup ───────────────────────────────────────────────
+    apt-get remove -y git && \
+    apt-get autoremove -y && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* \
+           /tmp/lua-resty-http \
+           /tmp/lua-resty-session \
+           /tmp/lua-resty-hmac \
+           /tmp/lua-resty-jwt \
+           /tmp/lua-resty-openidc \
+           /tmp/kong-oidc
+
+USER kong
+
+EXPOSE 8000 8443 8001 8444
+
+STOPSIGNAL SIGQUIT
+
+HEALTHCHECK --interval=10s --timeout=10s --retries=10 \
+    CMD kong health
+
+ENTRYPOINT ["/docker-entrypoint.sh"]
+CMD ["kong", "docker-start"]
