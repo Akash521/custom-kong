@@ -36,3 +36,15 @@ curl -X POST http://10.192.26.1:8080/realms/newsc/protocol/openid-connect/token 
 
   2026-04-03 13:03:27,753 WARN  [org.keycloak.events] (executor-thread-433) type="INTROSPECT_TOKEN_ERROR", realmId="4fd3172e-3a12-43e3-982b-0a0018f1e7f3", realmName="newsc", clientId="kong-client", userId="null", ipAddress="10.192.26.13", error="invalid_token", reason="Access token JWT check failed", client_auth_method="client-secret"
 
+
+
+
+  # Delete any existing pre-function plugin
+PRE_ID=$(curl -s http://localhost:8001/services/your-service/plugins | jq -r '.data[] | select(.name=="pre-function") | .id')
+[ ! -z "$PRE_ID" ] && curl -X DELETE http://localhost:8001/services/your-service/plugins/$PRE_ID
+
+# Add pre-function plugin with JWT decoding and group checking
+curl -X POST http://localhost:8001/services/your-service/plugins \
+  --data "name=pre-function" \
+  --data "config.access=-- Get authorization header; local auth_header = kong.request.get_header('authorization'); if not auth_header then return kong.response.exit(401, { message = 'Missing Authorization header' }); end; -- Extract token; local token = auth_header:match('^Bearer%s+(.+)$'); if not token then return kong.response.exit(401, { message = 'Invalid Authorization header format' }); end; -- Base64 decode function; local function b64_decode(data) local b = data:gsub('%-', '+'):gsub('_', '/'); while #b % 4 ~= 0 do b = b .. '='; end; return ngx.decode_base64(b); end; -- Split JWT; local parts = {}; for part in string.gmatch(token, '[^.]+') do table.insert(parts, part); end; if #parts < 2 then return kong.response.exit(401, { message = 'Invalid JWT token' }); end; -- Decode payload; local payload_json = b64_decode(parts[2]); if not payload_json then return kong.response.exit(401, { message = 'Invalid JWT payload' }); end; local payload = require('cjson').decode(payload_json); -- Extract groups; local groups = payload.groups or {}; local method = kong.request.get_method(); -- Check GET permissions; if method == 'GET' then local allowed = false; for _, group in ipairs(groups) do if group == 'Kong-Get-Users' then allowed = true; break; end; end; if not allowed then return kong.response.exit(403, { message = 'GET access denied. Required group: Kong-Get-Users. Your groups: ' .. table.concat(groups, ', ') }); end; -- Check POST permissions; elseif method == 'POST' then local allowed = false; for _, group in ipairs(groups) do if group == 'Kong-Post-Users' then allowed = true; break; end; end; if not allowed then return kong.response.exit(403, { message = 'POST access denied. Required group: Kong-Post-Users. Your groups: ' .. table.concat(groups, ', ') }); end; -- Method not allowed; else return kong.response.exit(405, { message = 'Method ' .. method .. ' not allowed' }); end"
+
