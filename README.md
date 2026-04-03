@@ -42,3 +42,10 @@ curl -X POST http://localhost:8001/services/your-service/plugins \
   "preferred_username": "kong1",
   "given_name": "kong1"
 }
+
+
+
+# Update OIDC plugin with correct group configuration
+curl -X PATCH http://localhost:8001/services/your-service/plugins/$OIDC_ID \
+  --data "config.authenticated_groups_claim=groups" \
+  --data "config.claim_strategy=fallback"
