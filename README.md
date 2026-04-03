@@ -51,3 +51,11 @@ curl -X POST http://localhost:8001/services/your-service/plugins \
 curl -X POST http://localhost:8001/services/your-service/plugins \
   --data "name=pre-function" \
   --data "config.access=local function get_groups() local auth = kong.request.get_header('authorization'); if not auth then return {}; end; local token = auth:match('^Bearer (.+)$'); if not token then return {}; end; local parts = {}; for part in token:gmatch('[^.]+') do parts[#parts+1] = part; end; if #parts < 2 then return {}; end; local payload = parts[2]:gsub('%-', '+'):gsub('_', '/'); while #payload % 4 ~= 0 do payload = payload .. '='; end; local json = ngx.decode_base64(payload); if not json then return {}; end; local data = require('cjson').decode(json); return data.groups or {}; end; local groups = get_groups(); local method = kong.request.get_method(); if method == 'GET' and not groups['Kong-Get-Users'] then return kong.response.exit(403, 'Kong-Get-Users group required for GET'); end; if method == 'POST' and not groups['Kong-Post-Users'] then return kong.response.exit(403, 'Kong-Post-Users group required for POST'); end"
+
+
+
+
+  # Add temporary debug plugin
+curl -X POST http://localhost:8001/services/your-service/plugins \
+  --data "name=pre-function" \
+  --data "config.access=local headers = kong.request.get_headers(); kong.log.err('=== ALL HEADERS ==='); for k, v in pairs(headers) do kong.log.err(k, ': ', v); end; kong.log.err('=================='); local auth = kong.request.get_header('authorization'); kong.log.err('Authorization header: ', auth or 'NOT FOUND');"
