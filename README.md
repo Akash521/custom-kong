@@ -32,3 +32,7 @@ curl -X POST http://10.192.26.1:8080/realms/newsc/protocol/openid-connect/token 
   -d "username=kong2" \
   -d "password=kong2-password" \
   -d "grant_type=password"
+
+
+  2026-04-03 13:03:27,753 WARN  [org.keycloak.events] (executor-thread-433) type="INTROSPECT_TOKEN_ERROR", realmId="4fd3172e-3a12-43e3-982b-0a0018f1e7f3", realmName="newsc", clientId="kong-client", userId="null", ipAddress="10.192.26.13", error="invalid_token", reason="Access token JWT check failed", client_auth_method="client-secret"
+
