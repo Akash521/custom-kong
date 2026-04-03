@@ -1,39 +1,19 @@
+ curl -i -X GET https://kong-mcore.newsc.mil.ae/api/health      -H "Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCIgOiAiSldUIiwia2lkIiA6ICJ0MmRpQnNhSDdQUXlMUzlRcE9fWkZwcUVGd3BEcS0tNDdPa05tSjJ2eXA4In0.eyJleHAiOjE3NzUyNDEyMDIsImlhdCI6MTc3NTI0MDkwMiwianRpIjoib25ydHJvOmFmYzM5OGIzLWY5N2UtZDhmYS05N2VjLTdhYzFiMDNiNzVlMiIsImlzcyI6Imh0dHA6Ly8xMC4xOTIuMjYuMTo4MDgwL3JlYWxtcy9uZXdzYyIsImF1ZCI6ImFjY291bnQiLCJzdWIiOiI3MDY4NTk4MC0xYTg1LTRhNzktOWYwOS1lNGNhNGFhYjBjMzQiLCJ0eXAiOiJCZWFyZXIiLCJhenAiOiJrb25nLWNsaWVudCIsInNpZCI6InVteVBlX1cwcUh2dXRQV1BscU9ZSDRUYyIsImFjciI6IjEiLCJhbGxvd2VkLW9yaWdpbnMiOlsiaHR0cHM6Ly9rb25nLW1jb3JlLm5ld3NjLm1pbC5hZSJdLCJyZWFsbV9hY2Nlc3MiOnsicm9sZXMiOlsib2ZmbGluZV9hY2Nlc3MiLCJ1bWFfYXV0aG9yaXphdGlvbiIsImRlZmF1bHQtcm9sZXMtbmV3c2MiXX0sInJlc291cmNlX2FjY2VzcyI6eyJhY2NvdW50Ijp7InJvbGVzIjpbIm1hbmFnZS1hY2NvdW50IiwibWFuYWdlLWFjY291bnQtbGlua3MiLCJ2aWV3LXByb2ZpbGUiXX19LCJzY29wZSI6InByb2ZpbGUgZW1haWwiLCJlbWFpbF92ZXJpZmllZCI6ZmFsc2UsIm5hbWUiOiJrb25nMSIsImdyb3VwcyI6WyIvS29uZy1HZXQtVXNlcnMiXSwicHJlZmVycmVkX3VzZXJuYW1lIjoia29uZzEiLCJnaXZlbl9uYW1lIjoia29uZzEifQ.IoIbiT9cPFcK3X82mkwiiYIJ6VxesCE3GYHHanb7zYCc7Zk6pfAFQwzvkQUIdNvv2ETgwHDwpDp2ERYNLLrw2tb53HGzQ_WIs8RtOvvU1FPK1TQUWeMAJL2j6hZ9Vm4Ewp70J92gsJY8kqKro8f4I6TUtrPfnlbuDZIRC2f-gImCMBHAgl0wHetdJ7OWCB8b_0D8dVaQ-_3zEXuiAK3ga9bTGNpoJShWovMe3_Q6lVamzjCZ_BEUMw55tnuEMzCGGTx8W-BDXKFpn2pw2nWcIBzUBeKE1i-ycBZvQSiLHOHYfK7gIfly1SKfNIQfnQpx_w6gVb_rs3jF_YNT6qx1Cg"
+HTTP/1.1 302 Moved Temporarily
+Server: nginx/1.26.3
+Date: Fri, 03 Apr 2026 18:30:44 GMT
+Content-Type: text/html
+Content-Length: 110
+Connection: keep-alive
+Set-Cookie: session=KGR8XdaRiIgR9Q0jBc4Spw|1775244644|n6AY0rSgFewlKp9lmsZ4DkFhw1BVoP6lZwRYviwD__V4qKWvPrNXV59tO_TF3bJdbpZIxsbgFlhI_mp6RB9qiTPtIE5NJ3eYaez-Lf9PSlJUNk1u1mbsGIjezB6fyec4_sThDqJzNAG1-gtUNIv1Y624tvKWi2nYmHxz7pIf09hdzz6DDN_lJwcayZk9rKm5ftZlUUNDGHH9c05Qe5IiUQ|Ow7L5t_Sa0bpfttYhDhlNj9A0gc; Path=/; SameSite=Lax; HttpOnly
+Cache-Control: no-cache, no-store, max-age=0
+Location: http://10.192.26.1:8080/realms/newsc/protocol/openid-connect/auth?redirect_uri=https%3A%2F%2Fkong-mcore.newsc.mil.ae%2Fapi%2Fhealth%2F&response_type=code&client_id=kong-client&scope=openid&nonce=e6d8393020c690c574c4eb6f0b48b82f&state=8ba79f72e4981e0108b7d3f02dd752aa
+X-Kong-Response-Latency: 4
+X-Kong-Request-Id: 588ed5792eb64345181fd73eb13b0951
 
-
-
-# Generate token for kong1 user
-curl -X POST http://10.192.26.1:8080/realms/newsc/protocol/openid-connect/token \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "client_id=kong-client" \
-  -d "client_secret=your-secret-here" \
-  -d "username=kong1" \
-  -d "password=kong1-password" \
-  -d "grant_type=password"
-
-# Generate token for kong2 user
-curl -X POST http://10.192.26.1:8080/realms/newsc/protocol/openid-connect/token \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "client_id=kong-client" \
-  -d "client_secret=your-secret-here" \
-  -d "username=kong2" \
-  -d "password=kong2-password" \
-  -d "grant_type=password"
-
-# Delete all plugins from the service
-curl -s http://localhost:8001/services/your-service/plugins | jq -r '.data[].id' | while read id; do
-    curl -X DELETE http://localhost:8001/services/your-service/plugins/$id
-done
-
-# Step 1: Add pre-function FIRST (so it runs before OIDC)
-curl -X POST http://localhost:8001/services/your-service/plugins \
-  --data "name=pre-function" \
-  --data "config.access=local auth_header = kong.request.get_header('authorization'); if not auth_header then return kong.response.exit(401, 'Missing auth header'); end; local token = auth_header:match('^Bearer%s+(.+)$'); if not token then return kong.response.exit(401, 'Invalid token'); end; local function b64_decode(data) local b = data:gsub('%-', '+'):gsub('_', '/'); while #b % 4 ~= 0 do b = b .. '='; end; return ngx.decode_base64(b); end; local parts = {}; for part in string.gmatch(token, '[^.]+') do table.insert(parts, part); end; if #parts < 2 then return kong.response.exit(401, 'Invalid JWT'); end; local payload = require('cjson').decode(b64_decode(parts[2])); local groups = payload.groups or {}; local method = kong.request.get_method(); if method == 'GET' then local allowed = false; for _, g in ipairs(groups) do if g == 'Kong-Get-Users' then allowed = true; break; end; end; if not allowed then return kong.response.exit(403, 'GET requires Kong-Get-Users'); end; elseif method == 'POST' then local allowed = false; for _, g in ipairs(groups) do if g == 'Kong-Post-Users' then allowed = true; break; end; end; if not allowed then return kong.response.exit(403, 'POST requires Kong-Post-Users'); end; end"
-
-# Step 2: Add OIDC SECOND (runs after pre-function)
-curl -X POST http://localhost:8001/services/your-service/plugins \
-  --data "name=oidc" \
-  --data "config.client_id=kong-client" \
-  --data "config.client_secret=your-secret" \
-  --data "config.discovery=http://10.192.26.1:8080/realms/newsc/.well-known/openid-configuration" \
-  --data "config.bearer_only=yes" \
-  --data "config.ssl_verify=no"
+<html>
+<head><title>302 Found</title></head>
+<body>
+<center><h1>302 Found</h1></center>
+</body>
+</html>
