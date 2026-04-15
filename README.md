@@ -1,242 +1,263 @@
 @startuml
-' Single Emitter Matching - Radar Pulse Only
-' Title: NMDB Single Emitter Matching Flow
+' Batch Processing - All Signal Types (Radar Pulse, Radar CW, COMINT)
+' Title: NMDB Batch Matching Flow
 
-title NMDB Single Emitter Matching Flow - Radar Pulse (No Modulation)
+title NMDB Batch Matching Flow - All Signal Types
 
 actor "Third-Party Product" as Client
 participant "NMDB API" as API
-participant "Request Validator" as Validator
+participant "Batch Manager" as BatchMgr
+participant "Async Worker" as Worker
 participant "Matching Engine" as Engine
 database "NRD Database" as NRD
 database "NMDB Database" as NMDB
 
-== 1. Request Reception ==
+== 1. Batch Request Received ==
 
-Client -> API: POST /nmdb/match with single emitter parameters
+Client -> API: POST /nmdb/match with multiple emitters
 note right of Client
-    Example Request (Radar Pulse):
+    Example Batch Request:
     {
-      "frequency": 9200,
-      "pri": 1.3,
-      "pulse_width": 0.5
+      "signals": [
+        {"signal_type": "Radar_Pulse", 
+         "frequency": 9200, "pri": 1.3, "pulse_width": 0.5},
+        
+        {"signal_type": "Radar_CW", 
+         "frequency": 9450, "modulation_type": "CW"},
+        
+        {"signal_type": "COMINT", 
+         "frequency": 250, "modulation_type": "FM"}
+      ]
     }
 end note
 activate API
 
-API -> NMDB: Store request
+API -> BatchMgr: Create batch job
+activate BatchMgr
+
+BatchMgr -> NMDB: Create batch record
 activate NMDB
-NMDB --> API: request_id
+NMDB --> BatchMgr: batch_id
 deactivate NMDB
 
-API -> Validator: Validate request
-activate Validator
+== 2. Create Individual Requests for Each Signal ==
 
-Validator -> Validator: Check mandatory fields for Radar Pulse
-note right of Validator
-    Mandatory fields for Radar Pulse:
-    - Frequency ✓
-    - PRI ✓
-    - Pulse Width ✓
-end note
-
-alt Missing Mandatory Fields
-    Validator --> API: Validation Error
-    API --> Client: 400 Bad Request
-    deactivate Validator
-    deactivate API
+loop For each signal in array
     
-else Valid Pass
-    Validator --> API: Valid
-    deactivate Validator
-    
-    API -> NMDB: Store emitter parameters
+    BatchMgr -> NMDB: Create match_request linked to batch
     activate NMDB
-    NMDB --> API: stored
+    NMDB --> BatchMgr: request_id
     deactivate NMDB
     
-    API -> Engine: process_match(request_id, params)
-    activate Engine
-end
-
-== 2. Find Candidates in NRD ==
-
-Engine -> Engine: Identify signal type (Radar_Pulse)
-
-Engine -> NRD: Query TechRadar + Mode + Waveform
-activate NRD
-NRD --> Engine: List of Radar candidates with technical data
-deactivate NRD
-
-== 3. Compare Each Mandatory Field with Tolerance ==
-
-loop For each NRD candidate
-    
-    Engine -> Engine: Compare Frequency
-    note right of Engine
-        Request: 9200 MHz (single)
-        NRD: 9100 - 9400 MHz (range)
-        Tolerance: ±5%
-        
-        Request range = 9200 ±5% = 8740 to 9660 MHz
-        NRD range = 9100 to 9400 MHz
-        Overlap? YES
-        
-        Result: MATCH ✓ (Weight: 30%)
-    end note
-    
-    Engine -> Engine: Compare PRI
-    note right of Engine
-        Request: 1.3 us (single)
-        NRD: 1.1 - 1.4 us (range)
-        Tolerance: ±10%
-        
-        Request range = 1.3 ±10% = 1.17 to 1.43 us
-        NRD range = 1.1 to 1.4 us
-        Overlap? YES
-        
-        Result: MATCH ✓ (Weight: 25%)
-    end note
-    
-    Engine -> Engine: Compare Pulse Width
-    note right of Engine
-        Request: 0.5 us (single)
-        NRD: 0.4 - 0.6 us (range)
-        Tolerance: ±15%
-        
-        Request range = 0.5 ±15% = 0.425 to 0.575 us
-        NRD range = 0.4 to 0.6 us
-        Overlap? YES
-        
-        Result: MATCH ✓ (Weight: 10%)
-    end note
-end
-
-== 4. Calculate Confidence Score ==
-
-Engine -> Engine: Calculate Weighted Score
-note right of Engine
-    CONFIDENCE SCORE CALCULATION:
-    
-    For Radar Pulse (Mandatory fields only):
-    
-    - Frequency:   30%  ✓  → 0.30
-    - PRI:         25%  ✓  → 0.25
-    - Pulse Width: 10%  ✓  → 0.10
-    
-    Total weights = 65%
-    
-    CONFIDENCE SCORE = 0.30 + 0.25 + 0.10 = 0.65
-end note
-
-Engine -> Engine: Assign Confidence Label
-note right of Engine
-    CONFIDENCE LABEL:
-    
-    Score 0.65 is between 0.50 and 0.79
-    Label = "MEDIUM"
-    
-    Ranges:
-    - High:   0.80 to 1.00
-    - Medium: 0.50 to 0.79
-    - Low:    0.20 to 0.49
-    - No Match: below 0.20
-end note
-
-== 5. Filter & Rank Results ==
-
-Engine -> Engine: Filter candidates below 0.20 threshold
-
-Engine -> Engine: Sort by confidence score descending
-
-Engine -> Engine: Assign rank (1 = highest score)
-
-note right of Engine
-    Rank 1: Score 0.65 (Medium)
-    Rank 2: Score 0.55 (Medium)
-    Rank 3: Score 0.30 (Low)
-end note
-
-Engine -> Engine: Limit to max_results (default = 50)
-
-== 6. Gather Complete Emitter Data from NRD ==
-
-loop For each matched candidate
-    
-    Engine -> NRD: Get EMITTER basic info
-    activate NRD
-    NRD --> Engine: ID, Name, Type, Classification, Function, Manufacturer
-    deactivate NRD
-    
-    Engine -> NRD: Get TECHNICAL details
-    activate NRD
-    NRD --> Engine: Frequency range, PRI range, PW range
-    deactivate NRD
-    
-    Engine -> NRD: Get PLATFORM data
-    activate NRD
-    NRD --> Engine: Platform Name, Type, Class, Installation Details
-    deactivate NRD
-    
-    Engine -> NRD: Get COUNTRY data
-    activate NRD
-    NRD --> Engine: Origin Country, Affiliation, Country Codes
-    deactivate NRD
-    
-    Engine -> NRD: Get UNIT data
-    activate NRD
-    NRD --> Engine: Operating Unit, Unit Type, Parent Command
-    deactivate NRD
-end
-
-== 7. Build Complete Response Object ==
-
-loop For each matched candidate
-    Engine -> Engine: Assemble complete response
-    note right
-        Response contains:
-        
-        1. MATCH METADATA
-           - Rank: 1
-           - Confidence Score: 0.65
-           - Confidence Label: "Medium"
-        
-        2. EMITTER INFO
-           - ID, Name, Type
-        
-        3. TECHNICAL DETAILS
-           - Frequency: 9100-9400 MHz
-           - PRI: 1.1-1.4 us
-           - Pulse Width: 0.4-0.6 us
-        
-        4. PLATFORM INFO
-           - Platform Name, Type
-        
-        5. COUNTRY INFO
-           - Origin Country, Affiliation
-    end note
-    
-    Engine -> NMDB: Store complete match result
+    BatchMgr -> NMDB: Store emitter parameters
     activate NMDB
-    NMDB --> Engine: stored
+    NMDB --> BatchMgr: stored
     deactivate NMDB
+    
+    note right of BatchMgr
+        Signal Types:
+        1. Radar_Pulse
+        2. Radar_CW
+        3. COMINT
+    end note
 end
 
-Engine -> NMDB: Update match_request status to completed
-activate NMDB
-NMDB --> Engine: updated
-deactivate NMDB
+BatchMgr --> API: Return Batch ID
+deactivate BatchMgr
 
-Engine --> API: Complete results with scores and all data
-deactivate Engine
-
-== 8. Return Complete Response to Client ==
-
-API --> Client: 200 OK with ranked results
+API --> Client: 202 Accepted
 note right of Client
-    Response includes for each match:
-    - Rank & Confidence Score & Label
-    - Emitter, Platform, Country, Unit data
+    Response:
+    {
+      "batch_id": "BATCH-001",
+      "total_signals": 3,
+      "status": "processing",
+      "status_url": "/batch/BATCH-001/status"
+    }
+end note
+deactivate API
+
+== 3. Async Processing in Background ==
+
+API -> Worker: Trigger async processing for batch_id
+activate Worker
+
+Worker -> NMDB: Get all pending requests for this batch
+activate NMDB
+NMDB --> Worker: List of signals to process
+deactivate NMDB
+
+== 4. Process Each Signal Based on Type ==
+
+loop For each signal in batch
+    
+    Worker -> Worker: Get signal_type from request
+    
+    alt Signal Type = Radar_Pulse
+    
+        Worker -> Engine: Process Radar Pulse
+        activate Engine
+        
+        Engine -> Engine: Validate mandatory fields
+        note right of Engine
+            Mandatory: Frequency, PRI, Pulse Width
+        end note
+        
+        Engine -> NRD: Query To DB
+        activate NRD
+        NRD --> Engine: Return candidates
+        deactivate NRD
+        
+        loop For each candidate
+            Engine -> Engine: Compare Frequency (±5% tolerance)
+            Engine -> Engine: Compare PRI (±10% tolerance)
+            Engine -> Engine: Compare Pulse Width (±15% tolerance)
+            Engine -> Engine: Calculate Score (30%+25%+10% = 65% max)
+        end
+        
+        Engine -> Engine: Filter below 0.20, Rank, Limit
+        Engine --> Worker: Radar Pulse results
+        deactivate Engine
+        
+    else Signal Type = Radar_CW
+    
+        Worker -> Engine: Process Radar CW
+        activate Engine
+        
+        Engine -> Engine: Validate mandatory fields
+        note right of Engine
+            Mandatory: Frequency only
+            Modulation: Optional
+        end note
+        
+        Engine -> NRD: Query To DB
+        activate NRD
+        NRD --> Engine: Return candidates
+        deactivate NRD
+        
+        loop For each candidate
+            Engine -> Engine: Compare Frequency (±5% tolerance)
+            
+            alt Modulation provided
+                Engine -> Engine: Compare Modulation (exact match)
+                note right
+                    If matches: +40% weight
+                    If not: 0% for modulation
+                end note
+            else No modulation provided
+                Engine -> Engine: Skip modulation (no penalty)
+            end
+        end
+        
+        Engine -> Engine: Calculate Score
+        note right of Engine
+            Radar CW Scoring:
+            - Frequency: 60% (always checked)
+            - Modulation: 40% (only if provided)
+            
+            Max score = 60% (if no modulation)
+            Max score = 100% (if modulation matches)
+        end note
+        
+        Engine -> Engine: Filter below 0.20, Rank, Limit
+        Engine --> Worker: Radar CW results
+        deactivate Engine
+        
+    else Signal Type = COMINT
+    
+        Worker -> Engine: Process COMINT
+        activate Engine
+        
+        Engine -> Engine: Validate mandatory fields
+        note right of Engine
+            Mandatory: Frequency AND Modulation
+            Both must be present
+        end note
+        
+        Engine -> NRD: Query To DB
+        activate NRD
+        NRD --> Engine: Return candidates
+        deactivate NRD
+        
+        loop For each candidate
+            Engine -> Engine: Compare Frequency (±5% tolerance)
+            Engine -> Engine: Compare Modulation (exact match)
+        end
+        
+        Engine -> Engine: Calculate Score
+        note right of Engine
+            COMINT Scoring:
+            - Frequency: 50%
+            - Modulation: 50%
+            
+            Max score = 100%
+        end note
+        
+        Engine -> Engine: Filter below 0.20, Rank, Limit
+        Engine --> Worker: COMINT results
+        deactivate Engine
+    end
+    
+    == 5. Store Results for This Signal ==
+    
+    Worker -> NMDB: Store match results for this request
+    activate NMDB
+    NMDB --> Worker: stored
+    deactivate NMDB
+    
+    Worker -> NMDB: Update batch progress (processed_signals +1)
+    activate NMDB
+    NMDB --> Worker: progress updated
+    deactivate NMDB
+end
+
+== 6. Batch Complete ==
+
+Worker -> NMDB: Mark batch as completed
+activate NMDB
+NMDB --> Worker: batch complete
+deactivate NMDB
+
+deactivate Worker
+
+== 7. Client Polls for Status ==
+
+Client -> API: GET /batch/BATCH-001/status
+activate API
+
+API -> NMDB: Get batch status
+activate NMDB
+NMDB --> API: Status: completed, 3 of 3 signals done
+deactivate NMDB
+
+API --> Client: 200 OK with status
+deactivate API
+
+== 8. Client Retrieves Results ==
+
+Client -> API: GET /batch/BATCH-001/results
+activate API
+
+API -> NMDB: Get all match results for this batch
+activate NMDB
+NMDB --> API: Complete results per signal
+deactivate NMDB
+
+API --> Client: 200 OK with paginated results
+note right of Client
+    Response includes per signal:
+    
+    Signal 1 (Radar_Pulse):
+    - Rank, Score 0.65 (Medium)
+    - Emitter, Platform, Country, Unit
+    
+    Signal 2 (Radar_CW):
+    - Rank, Score 0.60 (Medium)
+    - Emitter, Platform, Country, Unit
+    
+    Signal 3 (COMINT):
+    - Rank, Score 0.95 (High)
+    - Emitter, Platform, Country, Unit
 end note
 deactivate API
 
