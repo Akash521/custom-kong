@@ -146,3 +146,25 @@ MaxPower
 TransmissionMode
 ModulationAnalogue 
 ModulationDigital
+
+
+Feature Checklist
+Summary
+Feature Definition
+Reference Material
+Scope
+Requirements (A-Spec 20260327)
+Primary Requirements
+Secondary Requirements (Related)
+Acceptance Criteria
+Out of Scope
+Design Decisions / Open Questions
+Risks
+Dependencies
+Technical Design
+DB Schema
+API Endpoints and Permissions
+Test Strategy
+Documentation
+Task Breakdown
+
