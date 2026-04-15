@@ -1,142 +1,115 @@
 @startuml
-' Batch Processing Sequence Diagram
-' Title: NMDB Batch Matching Flow
+' Single Emitter Matching Sequence Diagram
+' Title: NMDB Single Emitter Matching Flow
 
-title NMDB Batch Matching Flow - Sequence Diagram
+title NMDB Single Emitter Matching Flow - Sequence Diagram
 
 actor "Third-Party\nProduct" as Client
 participant "NMDB\nAPI" as API
-participant "Batch\nManager" as BatchMgr
+participant "Request\nValidator" as Validator
 participant "Matching\nEngine" as Engine
 database "NRD\n(Read-Only)" as NRD
 database "NMDB\n(Tables)" as NMDB
-participant "Async\nWorker" as Worker
 
-== Batch Request Reception ==
+== Request Reception ==
 
-Client -> API: POST /nmdb/match\n{signals: [ emitter1, emitter2, ... ]}
+Client -> API: POST /nmdb/match\n{single emitter parameters}
 activate API
 
-API -> BatchMgr: create_batch_job(signals)
-activate BatchMgr
-
-BatchMgr -> NMDB: INSERT INTO batch_request\n(status='pending', total_signals=N)
+API -> NMDB: INSERT INTO match_request\n(status = 'pending')
 activate NMDB
-NMDB --> BatchMgr: batch_id
+NMDB --> API: request_id
 deactivate NMDB
 
-loop For each signal in array
-    BatchMgr -> NMDB: INSERT INTO match_request\n(batch_id, status='pending')
+API -> Validator: Validate request
+activate Validator
+
+Validator -> Validator: Check mandatory fields\nbased on signal type
+
+alt Missing Mandatory Fields
+    Validator --> API: Validation Error
+    API --> Client: 400 Bad Request\n{error: "missing fields"}
+    deactivate Validator
+    deactivate API
+else Valid Pass
+    Validator --> API: Valid
+    deactivate Validator
+    
+    API -> NMDB: INSERT INTO emitter_signal\n(request_id, parameters)
     activate NMDB
-    NMDB --> BatchMgr: request_id
+    NMDB --> API: stored
     deactivate NMDB
     
-    BatchMgr -> NMDB: INSERT INTO emitter_signal\n(request_id, parameters)
-    activate NMDB
-    NMDB --> BatchMgr: stored
-    deactivate NMDB
-end
-
-BatchMgr -> NMDB: UPDATE batch_request\nSET status='processing'
-activate NMDB
-NMDB --> BatchMgr: updated
-deactivate NMDB
-
-BatchMgr --> API: batch_id
-deactivate BatchMgr
-
-API --> Client: 202 Accepted\n{\n  "batch_id": "BATCH-001",\n  "total_signals": 150,\n  "status": "processing",\n  "status_url": "/batch/BATCH-001/status"\n}
-deactivate API
-
-== Asynchronous Processing ==
-
-API -> Worker: trigger_async_processing(batch_id)
-activate Worker
-
-Worker -> NMDB: SELECT * FROM match_request\nWHERE batch_id = 'BATCH-001'\nAND status = 'pending'
-activate NMDB
-NMDB --> Worker: list of pending requests
-deactivate NMDB
-
-loop For each pending request
-    Worker -> Worker: Load emitter parameters
-    
-    Worker -> NRD: SELECT FROM tech_radar\nJOIN tech_mode\nJOIN tech_waveform
-    activate NRD
-    NRD --> Worker: Radar candidates
-    deactivate NRD
-    
-    Worker -> NRD: SELECT FROM tech_transceiver
-    activate NRD
-    NRD --> Worker: Transceiver candidates
-    deactivate NRD
-    
-    Worker -> Engine: process_match(request_id, params)
+    API -> Engine: process_match(request_id, params)
     activate Engine
-    
-    Engine -> Engine: Compare with tolerance
+end
+
+== NRD Query ==
+
+Engine -> Engine: Identify signal type\n(Radar_Pulse / CW / COMINT)
+
+Engine -> NRD: SELECT FROM tech_radar\nJOIN tech_mode\nJOIN tech_waveform
+activate NRD
+NRD --> Engine: List of Radar candidates
+deactivate NRD
+
+Engine -> NRD: SELECT FROM tech_transceiver
+activate NRD
+NRD --> Engine: List of Transceiver candidates
+deactivate NRD
+
+Engine -> NRD: SELECT FROM tech_seeker
+activate NRD
+NRD --> Engine: List of Seeker candidates
+deactivate NRD
+
+== Comparison & Scoring ==
+
+loop For each NRD candidate
+    Engine -> Engine: Compare frequency\nwith ±5% tolerance
+    Engine -> Engine: Compare PRI\nwith ±10% tolerance
+    Engine -> Engine: Compare pulse width\nwith ±15% tolerance
+    Engine -> Engine: Compare modulation\n(exact match)
+    Engine -> Engine: Compare scan type\n(exact match)
     Engine -> Engine: Calculate weighted score
-    
-    loop For each matched result
-        Engine -> NMDB: INSERT INTO match_result
-        activate NMDB
-        NMDB --> Engine: stored
-        deactivate NMDB
-    end
-    
-    Engine -> NMDB: UPDATE match_request\nSET status='completed',\n total_results=N
+    note right
+        Weights by signal type:
+        - Frequency: 30%
+        - PRI: 25%
+        - PW: 10%
+        - Modulation: 20%
+        - Others: 15%
+    end note
+end
+
+== Filter & Rank ==
+
+Engine -> Engine: Filter below threshold\n(min_confidence = 0.20)
+
+Engine -> Engine: Sort by score descending\nAssign rank (1, 2, 3...)
+
+Engine -> Engine: Limit to max_results\n(default = 50)
+
+== Store Results ==
+
+loop For each matched result
+    Engine -> NMDB: INSERT INTO match_result\n(request_id, rank, score,\n matched_fields, returned_data)
     activate NMDB
-    NMDB --> Engine: updated
-    deactivate NMDB
-    
-    Engine --> Worker: completed
-    deactivate Engine
-    
-    Worker -> NMDB: UPDATE batch_request\nSET processed_signals = processed_signals + 1
-    activate NMDB
-    NMDB --> Worker: updated
+    NMDB --> Engine: stored
     deactivate NMDB
 end
 
-Worker -> NMDB: UPDATE batch_request\nSET status='completed',\n completed_at=NOW()
+Engine -> NMDB: UPDATE match_request\nSET status='completed',\n total_results=N, completed_at=NOW()
 activate NMDB
-NMDB --> Worker: updated
+NMDB --> Engine: updated
 deactivate NMDB
 
-Worker --> Worker: Batch processing complete
-deactivate Worker
+Engine --> API: results[]
+deactivate Engine
 
-== Status Polling (Later) ==
+== Response ==
 
-Client -> API: GET /batch/BATCH-001/status
-activate API
-
-API -> NMDB: SELECT * FROM batch_request\nWHERE id = 'BATCH-001'
-activate NMDB
-NMDB --> API: batch status
-deactivate NMDB
-
-API --> Client: 200 OK\n{\n  "batch_id": "BATCH-001",\n  "status": "completed",\n  "processed_signals": 150,\n  "percent_complete": 100\n}
-deactivate API
-
-== Results Retrieval (Later) ==
-
-Client -> API: GET /batch/BATCH-001/results?page=1
-activate API
-
-API -> NMDB: SELECT * FROM match_request\nWHERE batch_id = 'BATCH-001'
-activate NMDB
-NMDB --> API: list of request_ids
-deactivate NMDB
-
-loop For each request_id
-    API -> NMDB: SELECT * FROM match_result\nWHERE request_id = ?
-    activate NMDB
-    NMDB --> API: results for request
-    deactivate NMDB
-end
-
-API --> Client: 200 OK\n{\n  "batch_id": "BATCH-001",\n  "results": [\n    {request_id: "REQ-001", best_match: {...}},\n    {request_id: "REQ-002", best_match: {...}}\n  ]\n}
+API --> Client: 200 OK\n{\n  "request_id": "REQ-001",\n  "results": [\n    {rank:1, score:0.92, ...},\n    {rank:2, score:0.61, ...}\n  ]\n}
 deactivate API
 
 @enduml
