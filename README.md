@@ -1,8 +1,8 @@
 @startuml
-' Single Emitter Matching - Radar Pulse Only (Complete)
+' Single Emitter Matching - Radar Pulse Only (Complete with Storage & Retrieval)
 ' Title: NMDB Single Emitter Matching Flow
 
-title NMDB Single Emitter Matching Flow - Radar Pulse (Complete)
+title NMDB Single Emitter Matching Flow - Radar Pulse (Complete Lifecycle)
 
 actor "Trident" as Client
 participant "NMDB API" as API
@@ -11,7 +11,7 @@ participant "Matching Engine" as Engine
 database "NRD Database" as NRD
 database "NMDB Database" as NMDB
 
-== 1. Request Reception & Validation ==
+== SCENARIO 1: NEW MATCH REQUEST (First Time) ==
 
 Client -> API: POST /nmdb/match with single emitter parameters
 note right of Client
@@ -46,12 +46,27 @@ else Valid Pass
     Validator --> API: Valid
     deactivate Validator
     
-    API -> NMDB: Step 1: Create match_request record (status='pending')
+    API -> NMDB: Step 1: Create match_request record
+    note right of NMDB
+        match_request table:
+        - id = "REQ-001"
+        - status = "pending"
+        - created_at = NOW()
+        - expires_at = NOW() + 1 hour
+    end note
     activate NMDB
-    NMDB --> API: request_id
+    NMDB --> API: request_id = "REQ-001"
     deactivate NMDB
     
     API -> NMDB: Step 2: Store emitter parameters
+    note right of NMDB
+        emitter_parameters table:
+        - request_id = "REQ-001"
+        - frequency = 9200
+        - pri = 1.3
+        - pulse_width = 0.5
+        - expires_at = NOW() + 1 hour
+    end note
     activate NMDB
     NMDB --> API: stored
     deactivate NMDB
@@ -150,6 +165,7 @@ Engine -> Engine: Step 9: Filter candidates below 0.20 threshold
 
 alt No candidates above threshold
     Engine -> NMDB: Update match_request status='completed' (0 results)
+    note right of NMDB: Record will be deleted after 1 hour
     activate NMDB
     NMDB --> Engine: updated
     deactivate NMDB
@@ -185,16 +201,33 @@ else Has candidates
         deactivate NRD
     end
     
-    == 8. Store Results ==
+    == 8. Store Results with TTL ==
     
     loop For each matched candidate
-        Engine -> NMDB: Store match result
+        Engine -> NMDB: Store match result with TTL=1 hour
+        note right of NMDB
+            match_result table:
+            - request_id = "REQ-001"
+            - rank = 1
+            - confidence_score = 1.00
+            - confidence_label = "HIGH"
+            - matched_fields = {...}
+            - created_at = NOW()
+            - expires_at = NOW() + 1 hour
+        end note
         activate NMDB
         NMDB --> Engine: stored
         deactivate NMDB
     end
     
     Engine -> NMDB: Update match_request status='completed', total_results=N
+    note right of NMDB
+        match_request table:
+        - status = "completed"
+        - total_results = 3
+        - completed_at = NOW()
+        - expires_at = NOW() + 1 hour
+    end note
     activate NMDB
     NMDB --> Engine: updated
     deactivate NMDB
@@ -221,5 +254,60 @@ else Has candidates
     end note
     deactivate API
 end
+
+== SCENARIO 2: RETRIEVAL WITHIN 1 HOUR (Fast - No Re-processing) ==
+
+Client -> API: GET /nmdb/match/REQ-001
+note right of Client
+    Retrieve previous results
+    (Within 1 hour window)
+end note
+activate API
+
+API -> NMDB: Step 13: Check if request exists and not expired
+activate NMDB
+
+alt Request Found and NOT Expired (expires_at > NOW)
+    NMDB --> API: Request exists, status='completed'
+    
+    API -> NMDB: Step 14: Fetch stored results
+    NMDB --> API: All match results from match_result table
+    deactivate NMDB
+    
+    API --> Client: Step 15: Return cached results
+    note right of Client
+        Response: Same as original response
+        Time: <10ms (No re-processing!)
+        Data retrieved from stored results
+    end note
+    deactivate API
+    
+else Request Expired or Not Found
+    NMDB --> API: Request not found or expired
+    deactivate NMDB
+    
+    API --> Client: 404 Not Found
+    note right of Client
+        {
+          "error": "Request ID not found or expired",
+          "message": "Please submit a new match request"
+        }
+    end note
+    deactivate API
+end
+
+== SCENARIO 3: AUTOMATIC CLEANUP AFTER 1 HOUR ==
+
+note over NMDB
+    PostgreSQL scheduled job runs every hour:
+    
+    DELETE FROM match_result WHERE expires_at < NOW();
+    DELETE FROM emitter_parameters WHERE expires_at < NOW();
+    DELETE FROM match_request WHERE expires_at < NOW();
+    
+    Data is permanently deleted after 1 hour
+end note
+
+
 
 @enduml
