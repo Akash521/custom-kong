@@ -1,8 +1,8 @@
 @startuml
-' Single Emitter Matching - Radar Pulse Only
+' Single Emitter Matching - Radar Pulse Only (Complete)
 ' Title: NMDB Single Emitter Matching Flow
 
-title NMDB Single Emitter Matching Flow - Radar Pulse 
+title NMDB Single Emitter Matching Flow - Radar Pulse (Complete)
 
 actor "Trident" as Client
 participant "NMDB API" as API
@@ -11,19 +11,19 @@ participant "Matching Engine" as Engine
 database "NRD Database" as NRD
 database "NMDB Database" as NMDB
 
-== 1. Request Reception ==
+== 1. Request Reception & Validation ==
 
 Client -> API: POST /nmdb/match with single emitter parameters
 note right of Client
     Example Request (Radar Pulse):
     {
-      "signal_type": "Radar_Pulse"
+      "signal_type": "Radar_Pulse",
       "frequency": 9200,
       "pri": 1.3,
       "pulse_width": 0.5
     }
 end note
-
+activate API
 
 API -> Validator: Validate request
 activate Validator
@@ -46,7 +46,12 @@ else Valid Pass
     Validator --> API: Valid
     deactivate Validator
     
-    API -> NMDB: Store emitter parameters
+    API -> NMDB: Step 1: Create match_request record (status='pending')
+    activate NMDB
+    NMDB --> API: request_id
+    deactivate NMDB
+    
+    API -> NMDB: Step 2: Store emitter parameters
     activate NMDB
     NMDB --> API: stored
     deactivate NMDB
@@ -55,174 +60,166 @@ else Valid Pass
     activate Engine
 end
 
-== 2. Find Candidates in NRD ==
+== 2. Apply Tolerance to Request Values ==
 
-Engine -> Engine: Identify signal type (Radar_Pulse)
+Engine -> Engine: Step 3: Identify signal type (Radar_Pulse)
 
-
-Engine -> NRD: Query by Range Overlap + Mode + Waveform (GiST indexed)
-activate NRD
-note right of NRD
-    NRD uses PostgreSQL GiST indexes for efficient range matching:
-    - frequency_range && :request_frequency_range
-    - pri_range       && :request_pri_range
-    - pw_range        && :request_pw_range
+Engine -> Engine: Step 4: Apply tolerance to create ranges
+note right of Engine
+    Frequency: 9200 ±5% = 8740 to 9660 MHz
+    PRI: 1.3 ±10% = 1.17 to 1.43 us
+    Pulse Width: 0.5 ±15% = 0.425 to 0.575 us
 end note
-NRD --> Engine: Candidate emitters (via GiST index scan)
+
+== 3. Find Candidates in NRD (Using GiST Indexes) ==
+
+Engine -> NRD: Step 5: Query by Range Overlap (GiST indexed)
+note right of NRD
+    NRD uses PostgreSQL GiST indexes:
+    - frequency_range && '[8740,9660]'
+    - pri_range && '[1.17,1.43]'
+    - pw_range && '[0.425,0.575]'
+end note
+activate NRD
+
+NRD -> NRD: GiST index scan
+note right of NRD
+    20,000 → 200 → 40 → 15 candidates
+    Time: 20-30ms
+end note
+
+NRD --> Engine: Step 6: Return candidate emitters (15 rows)
 deactivate NRD
 
+== 4. Compare Each Field with Tolerance ==
 
-== 3. Compare Each Mandatory Field with Tolerance ==
-
-loop For each NRD candidate
+loop For each NRD candidate (15 times)
     
     Engine -> Engine: Compare Frequency
     note right of Engine
-        Request: 9200 MHz (single)
-        NRD: 9100 - 9400 MHz (range)
-        Tolerance: ±5%
-        
-        Request range = 9200 ±5% = 8740 to 9660 MHz
-        NRD range = 9100 to 9400 MHz
+        Request: 8740-9660
+        NRD: 9100-9400
         Overlap? YES
-        
         Result: MATCH ✓ (Weight: 50%)
     end note
     
     Engine -> Engine: Compare PRI
     note right of Engine
-        Request: 1.3 us (single)
-        NRD: 1.1 - 1.4 us (range)
-        Tolerance: ±10%
-        
-        Request range = 1.3 ±10% = 1.17 to 1.43 us
-        NRD range = 1.1 to 1.4 us
+        Request: 1.17-1.43
+        NRD: 1.1-1.4
         Overlap? YES
-        
-        Result: MATCH ✓ (Weight: 35%)
+        Result: MATCH ✓ (Weight: 30%)
     end note
     
     Engine -> Engine: Compare Pulse Width
     note right of Engine
-        Request: 0.5 us (single)
-        NRD: 0.4 - 0.6 us (range)
-        Tolerance: ±15%
-        
-        Request range = 0.5 ±15% = 0.425 to 0.575 us
-        NRD range = 0.4 to 0.6 us
+        Request: 0.425-0.575
+        NRD: 0.4-0.6
         Overlap? YES
-        
-        Result: MATCH ✓ (Weight: 15%)
+        Result: MATCH ✓ (Weight: 20%)
     end note
 end
 
-== 4. Calculate Confidence Score ==
+== 5. Calculate Confidence Score ==
 
-Engine -> Engine: Calculate Weighted Score
+Engine -> Engine: Step 7: Calculate Weighted Score
 note right of Engine
     CONFIDENCE SCORE CALCULATION:
     
-    For Radar Pulse (Mandatory fields only):
+    - Frequency:   50% ✓ → 0.50
+    - PRI:         30% ✓ → 0.30
+    - Pulse Width: 20% ✓ → 0.20
     
-    - Frequency:   50%  ✓  → 0.50
-    - PRI:         35%  ✓  → 0.35
-    - Pulse Width: 15%  ✓  → 0.15
-    
-    Total weights = 100%
-    
-    CONFIDENCE SCORE = 0.50 + 0.35 + 0.15 = 1.00
+    TOTAL = 1.00 (100%)
 end note
 
-Engine -> Engine: Assign Confidence Label
+Engine -> Engine: Step 8: Assign Confidence Label
 note right of Engine
-    CONFIDENCE LABEL:
+    Score 1.00 → Label = "HIGH"
     
-    Score 1.00 is between 0.80 and 1.00
-    Label = "High"
-    
-    Ranges:
-    - High:   0.80 to 1.00
-    - Medium: 0.50 to 0.79
-    - Low:    0.20 to 0.49
-    - No Match: below 0.20
+    Thresholds:
+    - HIGH:   0.80 to 1.00
+    - MEDIUM: 0.50 to 0.79
+    - LOW:    0.20 to 0.49
+    - NO MATCH: below 0.20
 end note
 
-== 5. Filter & Rank Results ==
+== 6. Filter, Rank & Handle No Match ==
 
-Engine -> Engine: Filter candidates below 0.20 threshold
+Engine -> Engine: Step 9: Filter candidates below 0.20 threshold
 
-Engine -> Engine: Sort by confidence score descending
-
-Engine -> Engine: Assign rank (1 = highest score)
-
-note right of Engine
-    Rank 1: Score 1.00 (High)
-    Rank 2: Score 0.55 (Medium)
-    Rank 3: Score 0.30 (Low)
-end note
-
-Engine -> Engine: Limit to max_results (default = 50)
-
-== 6. Gather Complete Emitter Data from NRD ==
-
-loop For each matched candidate
+alt No candidates above threshold
+    Engine -> NMDB: Update match_request status='completed' (0 results)
+    activate NMDB
+    NMDB --> Engine: updated
+    deactivate NMDB
     
-    Engine -> NRD: Get EMITTER basic info
-    activate NRD
-    NRD --> Engine: ID, Name, Type, Classification, Function, Manufacturer
-    deactivate NRD
+    Engine --> API: No matches found
+    API --> Client: 200 OK with empty results list
+    deactivate Engine
+    deactivate API
     
-    Engine -> NRD: Get TECHNICAL details
-    activate NRD
-    NRD --> Engine: Frequency range, PRI range, PW range
-    deactivate NRD
+else Has candidates
+    Engine -> Engine: Step 10: Sort by confidence score descending
     
-end
-
-== 7. Build Complete Response Object ==
-
-loop For each matched candidate
-    Engine -> Engine: Assemble complete response
-    note right
-        Response contains:
-        
-        1. MATCH METADATA
-           - Rank: 1
-           - Confidence Score: 1.00
-           - Confidence Label: "High"
-        
-        2. EMITTER INFO
-           - ID, Name, Type
-        
-        3. TECHNICAL DETAILS
-           - Frequency: 9100-9400 MHz
-           - PRI: 1.1-1.4 us
-           - Pulse Width: 0.4-0.6 us
-        
+    Engine -> Engine: Step 11: Assign rank (1 = highest score)
+    note right of Engine
+        Rank 1: Score 1.00 (HIGH)
+        Rank 2: Score 0.55 (MEDIUM)
+        Rank 3: Score 0.30 (LOW)
     end note
     
-    Engine -> NMDB: Store complete match result
+    Engine -> Engine: Step 12: Limit to max_results (default = 50)
+    
+    == 7. Gather Emitter Data ==
+    
+    loop For each matched candidate
+        Engine -> NRD: Get EMITTER basic info
+        activate NRD
+        NRD --> Engine: ID, Name, Type, Classification
+        deactivate NRD
+        
+        Engine -> NRD: Get TECHNICAL details
+        activate NRD
+        NRD --> Engine: Frequency range, PRI range, PW range
+        deactivate NRD
+    end
+    
+    == 8. Store Results ==
+    
+    loop For each matched candidate
+        Engine -> NMDB: Store match result
+        activate NMDB
+        NMDB --> Engine: stored
+        deactivate NMDB
+    end
+    
+    Engine -> NMDB: Update match_request status='completed', total_results=N
     activate NMDB
-    NMDB --> Engine: stored
+    NMDB --> Engine: updated
     deactivate NMDB
+    
+    Engine --> API: Complete results with scores
+    deactivate Engine
+    
+    == 9. Return Response ==
+    
+    API --> Client: 200 OK with ranked results
+    note right of Client
+        Response:
+        {
+          "request_id": "REQ-001",
+          "results": [
+            {
+              "rank": 1,
+              "name": "SA-6 Straight Flush",
+              "confidence_score": 1.00,
+              "confidence_label": "HIGH"
+            }
+          ]
+        }
+    end note
+    deactivate API
 end
-
-Engine -> NMDB: Update match_request status to completed
-activate NMDB
-NMDB --> Engine: updated
-deactivate NMDB
-
-Engine --> API: Complete results with scores and all data
-deactivate Engine
-
-== 8. Return Complete Response to Client ==
-
-API --> Client: 200 OK with ranked results
-note right of Client
-    Response includes for each match:
-    - Rank & Confidence Score & Label
-    - Emitter Info
-end note
-deactivate API
 
 @enduml
